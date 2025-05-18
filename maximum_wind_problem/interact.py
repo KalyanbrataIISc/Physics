@@ -6,8 +6,8 @@ import math as m
 # Constants (can be adjusted)
 wind_speed = 10.0
 sensor_distance = 10.0
-power = 4  # Example power, can be changed
-run_time = 10.0  # Total simulation time for animation
+power = 10  # Example power, can be changed
+run_time = 50.0  # Total simulation time for animation
 dt = 0.05  # Time step for animation, affects smoothness and speed
 
 time_period_interactive = 10.0 # seconds
@@ -52,35 +52,47 @@ accumulators = np.zeros(num_sensors)
 wind_vector = np.array([0, wind_speed])
 
 # Set up the figure and subplots
-fig, (ax_fan, ax_accum) = plt.subplots(2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [1, 3]})
+fig = plt.figure(figsize=(12, 6))
+gs = fig.add_gridspec(2, 2, width_ratios=[3, 1])
 
-# --- Fan position subplot ---
+# --- Fan position subplot (top left) ---
+ax_fan = fig.add_subplot(gs[0, 0])
 ax_fan.set_xlim(0, 10)
 ax_fan.set_ylim(-1, 1)
 ax_fan.set_yticks([])
 ax_fan.set_title(f"Fan Base Position (Live) - {waveform_interactive} @ {frequency_interactive:.2f} Hz", fontsize=10)
 ax_fan.set_xlabel("Fan X Position", fontsize=9)
 fan_marker, = ax_fan.plot([], [], 'ro', markersize=8) # Fan marker
-# Line representing the 0-10 track for the fan
 ax_fan.plot([0, 10], [0, 0], 'k-', lw=1)
 
-
-# --- Accumulator subplot ---
+# --- Accumulator subplot (bottom left) ---
+ax_accum = fig.add_subplot(gs[1, 0])
 ax_accum.set_xlim(0, 10)
-ax_accum.set_ylim(0, 1) # Initial y-limit, will adjust if needed or normalize
+ax_accum.set_ylim(0, 1)
 ax_accum.set_title("Sensor Accumulation (Live)", fontsize=10)
 ax_accum.set_xlabel("Sensor x position", fontsize=9)
 ax_accum.set_ylabel("Normalized Accumulation (Approx.)", fontsize=9)
 ax_accum.grid(True)
 line_accum, = ax_accum.plot(x_sensors, accumulators, 'b-', linewidth=1)
 
+# --- Instantaneous dot product subplot (right column) ---
+ax_dot = fig.add_subplot(gs[:, 1])  # Spans both rows
+ax_dot.set_xlim(0, 10)
+ax_dot.set_ylim(0, 1)  # Normalized range
+ax_dot.set_title(f"Instantaneous Wind Power", fontsize=10)
+ax_dot.set_xlabel("Sensor x position", fontsize=9)
+ax_dot.set_ylabel("Normalized Value", fontsize=9)
+ax_dot.grid(True)
+line_dot, = ax_dot.plot([], [], 'g-', linewidth=1)
+
 # Initialization function for the animation
 def init():
     global accumulators
-    accumulators = np.zeros(num_sensors) # Reset accumulators
+    accumulators = np.zeros(num_sensors)
     line_accum.set_ydata(accumulators)
     fan_marker.set_data([], [])
-    return line_accum, fan_marker
+    line_dot.set_data([], [])
+    return line_accum, fan_marker, line_dot
 
 # Animation update function
 def update(frame_time):
@@ -89,36 +101,40 @@ def update(frame_time):
 
     fan_x = fan_base_position(t, omega=omega_interactive, waveform=waveform_interactive)
     fan_pos = np.array([fan_x, 0])
-    fan_marker.set_data([fan_x], [0]) # Update fan marker position
+    fan_marker.set_data([fan_x], [0])
 
     sensor_positions = np.stack((x_sensors, np.full_like(x_sensors, y_sensor)), axis=1)
     r = sensor_positions - fan_pos
     
     r_norms = np.linalg.norm(r, axis=1)
-    # Avoid division by zero if a sensor is exactly at the fan's (x,y) position (r_norm = 0)
-    # This is unlikely for y_sensor > 0 but good practice.
-    # If r_norm is zero, dot_product contribution is zero anyway unless we define it differently.
-    epsilon = 1e-9 # Small number to prevent division by zero
+    epsilon = 1e-9
     dot_products = np.zeros_like(r_norms)
     valid_indices = r_norms > epsilon
     
-    # Only calculate for sensors where r_norm is not zero
     dot_products[valid_indices] = (wind_vector[1] * r[valid_indices, 1]) / r_norms[valid_indices]
     
-    accumulators += (dot_products ** power) * dt
+    # Calculate powered and normalized dot products for display
+    powered_dot = np.abs(dot_products) ** power
+    if np.max(powered_dot) > 1e-9:
+        normalized_dot = powered_dot / np.max(powered_dot)
+    else:
+        normalized_dot = np.zeros_like(powered_dot)
+    
+    # Update dot product plot
+    line_dot.set_data(x_sensors, normalized_dot)
+    
+    accumulators += powered_dot * dt
 
-    # Normalize accumulators for consistent plotting scale if they grow too large
+    # Normalize accumulators
     current_max_abs = np.max(np.abs(accumulators))
-    if current_max_abs > 1e-9: # Avoid division by zero or very small numbers
+    if current_max_abs > 1e-9:
         line_accum.set_ydata(accumulators / current_max_abs)
     else:
-        line_accum.set_ydata(np.zeros_like(accumulators)) # Set to zero if all values are tiny
+        line_accum.set_ydata(np.zeros_like(accumulators))
 
-    return line_accum, fan_marker
+    return line_accum, fan_marker, line_dot
 
 # Create the animation
-# frames is the source of events. Here, it's the `times` array.
-# interval is the delay between frames in milliseconds.
 ani = animation.FuncAnimation(fig, update, frames=times,
                               init_func=init, blit=True, interval=dt*1000, repeat=False)
 
